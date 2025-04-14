@@ -11,7 +11,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 # Define configuration constants
-URL = "https://translate-3oi0.onrender.com"
+URL = "https://exact-tersina-huduma-c36085db.koyeb.app"
 PORT = int(os.environ.get("PORT", 10000))
 
 # Function ya /start
