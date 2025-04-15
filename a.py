@@ -18,10 +18,18 @@ from starlette.routing import Route
 URL = "https://exact-tersina-huduma-c36085db.koyeb.app"
 PORT = int(os.environ.get("PORT", 10000))
 TOKEN = "5861324474:AAH7zCxyQAiroqp74qTgipHlAikpqI0jDMQ"
-DB_URL = "postgresql://salman_db_user:SLsYvFI8otsdl4lojU92BddoT2D25pb7@dpg-cvnlpac9c44c73ec1npg-a.oregon-postgres.render.com/salman_db"
 
-conn = psycopg2.connect(DB_URL)
+
+# DB Connection (Add this before you use any cursor.execute)
+conn = psycopg2.connect(
+    host=os.environ.get("DB_HOST", "localhost"),
+    database=os.environ.get("DB_NAME", "your_db"),
+    user=os.environ.get("DB_USER", "your_user"),
+    password=os.environ.get("DB_PASSWORD", "your_password"),
+    port=os.environ.get("DB_PORT", 5432)
+)
 cursor = conn.cursor()
+
 
 def save_chat_id(chat_id: int):
     cursor.execute("""
