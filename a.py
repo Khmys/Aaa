@@ -4,33 +4,32 @@ import psycopg2
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
-from telegram.error import TelegramError, BadRequest
-
-# WebHook
-import uvicorn
+from telegram.error import TelegramError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
+import uvicorn
 
-
-# ENV & DB
+# Telegram & Server Info
 URL = "https://exact-tersina-huduma-c36085db.koyeb.app"
 PORT = int(os.environ.get("PORT", 10000))
 TOKEN = "5861324474:AAH7zCxyQAiroqp74qTgipHlAikpqI0jDMQ"
 
-
-# DB Connection (Add this before you use any cursor.execute)
-conn = psycopg2.connect(
-    host=os.environ.get("DB_HOST", "localhost"),
-    database=os.environ.get("DB_NAME", "your_db"),
-    user=os.environ.get("DB_USER", "your_user"),
-    password=os.environ.get("DB_PASSWORD", "your_password"),
-    port=os.environ.get("DB_PORT", 5432)
-)
+# Database Connection
+conn = psycopg2.connect("postgresql://neondb_owner:npg_Uvzk0FtMy1HO@ep-purple-bonus-a4vsqvfv-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require")
 cursor = conn.cursor()
 
+# Database Table Check (optional: create if doesn't exist)
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        chat_id BIGINT PRIMARY KEY,
+        blocked BOOLEAN DEFAULT FALSE
+    );
+""")
+conn.commit()
 
+# Save chat ID
 def save_chat_id(chat_id: int):
     cursor.execute("""
         INSERT INTO users (chat_id) 
@@ -39,65 +38,62 @@ def save_chat_id(chat_id: int):
     """, (chat_id,))
     conn.commit()
 
-
+# Remove chat ID
 def remove_chat_id(chat_id: int):
     cursor.execute("DELETE FROM users WHERE chat_id = %s;", (chat_id,))
     conn.commit()
 
+# Get all chat IDs
 def get_all_chat_ids():
     cursor.execute("SELECT chat_id FROM users WHERE blocked = FALSE;")
     return [row[0] for row in cursor.fetchall()]
 
-
-
+# Handle commands
 async def amuli(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
-        return 
+        return
+
     try:
         user = update.effective_user
         chat_id = update.effective_chat.id
-        
-        command= msg.text.split()[0]
+        command = msg.text.split()[0]
+
         if command == "/start":
             save_chat_id(chat_id)
             await update.message.reply_text(
-            f"Karibu, {user.first_name}! Tuma post 📤 pia Utapokea 📥 post kutoka kwa watumiaji mbali mbali wa bot hii")
-        
-        if command == "/off":
+                f"Karibu, {user.first_name}! Tuma post 📤 pia Utapokea 📥 post kutoka kwa watumiaji mbali mbali wa bot hii")
+
+        elif command == "/off":
             cursor.execute("UPDATE users SET blocked = TRUE WHERE chat_id = %s;", (chat_id,))
             conn.commit()
             await update.message.reply_text("⛔ Umejitoa kupokea matangazo. Unaweza kurudi kwa kutumia /start")
-            
-        if command == "/on":
+
+        elif command == "/on":
             cursor.execute("UPDATE users SET blocked = FALSE WHERE chat_id = %s;", (chat_id,))
             conn.commit()
             await update.message.reply_text("✅ Umerudi kupokea matangazo. Karibu tena!")
-        
-        if command == "takwimu":
+
+        elif command == "takwimu":
             cursor.execute("SELECT COUNT(*) FROM users;")
             jumla = cursor.fetchone()[0]
-            
             cursor.execute("SELECT COUNT(*) FROM users WHERE blocked = TRUE;")
             walioblock = cursor.fetchone()[0]
             active = jumla - walioblock
-            
-            msg = (
-            f"**Takwimu za Watumiaji**\n\n"
-            f"👥 Jumla ya waliojiunga: {jumla}\n"
-            f"✅ Walio hai (hawajablock): {active}\n"
-            f"🚫 Walioblock bot: {walioblock}")
-            
-            await update.message.reply_text(msg, parse_mode="Markdown")
-            
 
+            msg = (
+                f"**Takwimu za Watumiaji**\n\n"
+                f"👥 Jumla ya waliojiunga: {jumla}\n"
+                f"✅ Walio hai (hawajablock): {active}\n"
+                f"🚫 Walioblock bot: {walioblock}"
+            )
+            await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
         error_msg = f"Kuna hitilafu kwenye function ya Start: {str(e)}"
         await context.bot.send_message(chat_id=-1002158955567, text=error_msg)
 
-
-
+# Handle message forwarding
 async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         message = update.effective_message
@@ -111,7 +107,6 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         full_name = update.effective_user.full_name if update.effective_user else "Mtu asiyejulikana"
-
         caption = message.caption or ""
         ujumbe = message.text or ""
 
@@ -164,8 +159,7 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"Imeshindikana kutuma ujumbe: {e}"
         )
 
-
-
+# Main Function
 async def main() -> None:
     app = Application.builder().token(TOKEN).build()
 
@@ -174,21 +168,14 @@ async def main() -> None:
         await app.update_queue.put(update)
         return Response()
 
-    starlette_app = Starlette(
-        routes=[Route("/telegram", telegram, methods=["POST"])]
-    )
+    starlette_app = Starlette(routes=[Route("/telegram", telegram, methods=["POST"])])
 
-    
     app.add_handler(CommandHandler(["start", "off", "on", "takwimu"], amuli))
     app.add_handler(MessageHandler(filters.ALL, forward))
 
     async with app:
         await app.bot.set_webhook(url=f"{URL}/telegram")
-
-        server = uvicorn.Server(
-            config=uvicorn.Config(app=starlette_app, port=PORT, host="0.0.0.0")
-        )
-
+        server = uvicorn.Server(config=uvicorn.Config(app=starlette_app, port=PORT, host="0.0.0.0"))
         await app.start()
         await server.serve()
         await app.stop()
