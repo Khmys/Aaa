@@ -1,56 +1,187 @@
 import os
 import asyncio
+import psycopg2
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
+from telegram.error import TelegramError, BadRequest
+
+# WebHook
 import uvicorn
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-)
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-# Define configuration constants
+
+# ENV & DB
 URL = "https://exact-tersina-huduma-c36085db.koyeb.app"
 PORT = int(os.environ.get("PORT", 10000))
+TOKEN = "5861324474:AAH7zCxyQAiroqp74qTgipHlAikpqI0jDMQ"
+DB_URL = "postgresql://salman_db_user:SLsYvFI8otsdl4lojU92BddoT2D25pb7@dpg-cvnlpac9c44c73ec1npg-a.oregon-postgres.render.com/salman_db"
 
-# Function ya /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Karibu! Tuma ujumbe wowote nitaukirudisha (echo).")
+conn = psycopg2.connect(DB_URL)
+cursor = conn.cursor()
 
-# Function ya echo - kurudisha ujumbe ule ule
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(update.message.text)
+def save_chat_id(chat_id: int):
+    cursor.execute("""
+        INSERT INTO users (chat_id) 
+        VALUES (%s) 
+        ON CONFLICT (chat_id) DO NOTHING;
+    """, (chat_id,))
+    conn.commit()
 
-# Main function
-async def main():
-    app = ApplicationBuilder().token("848672959:AAGmoUTO0xGhybDm8hMVk3TkSlJ7UHbTMdI").build()
 
-    # Telegram webhook endpoint
-    async def telegram(request: Request) -> Response:
-        await app.update_queue.put(
-            Update.de_json(data=await request.json(), bot=app.bot)
+def remove_chat_id(chat_id: int):
+    cursor.execute("DELETE FROM users WHERE chat_id = %s;", (chat_id,))
+    conn.commit()
+
+def get_all_chat_ids():
+    cursor.execute("SELECT chat_id FROM users WHERE blocked = FALSE;")
+    return [row[0] for row in cursor.fetchall()]
+
+
+
+async def amuli(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return 
+    try:
+        user = update.effective_user
+        chat_id = update.effective_chat.id
+        
+        command= msg.text.split()[0]
+        if command == "/start":
+            save_chat_id(chat_id)
+            await update.message.reply_text(
+            f"Karibu, {user.first_name}! Tuma post 📤 pia Utapokea 📥 post kutoka kwa watumiaji mbali mbali wa bot hii")
+        
+        if command == "/off":
+            cursor.execute("UPDATE users SET blocked = TRUE WHERE chat_id = %s;", (chat_id,))
+            conn.commit()
+            await update.message.reply_text("⛔ Umejitoa kupokea matangazo. Unaweza kurudi kwa kutumia /start")
+            
+        if command == "/on":
+            cursor.execute("UPDATE users SET blocked = FALSE WHERE chat_id = %s;", (chat_id,))
+            conn.commit()
+            await update.message.reply_text("✅ Umerudi kupokea matangazo. Karibu tena!")
+        
+        if command == "takwimu":
+            cursor.execute("SELECT COUNT(*) FROM users;")
+            jumla = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM users WHERE blocked = TRUE;")
+            walioblock = cursor.fetchone()[0]
+            active = jumla - walioblock
+            
+            msg = (
+            f"**Takwimu za Watumiaji**\n\n"
+            f"👥 Jumla ya waliojiunga: {jumla}\n"
+            f"✅ Walio hai (hawajablock): {active}\n"
+            f"🚫 Walioblock bot: {walioblock}")
+            
+            await update.message.reply_text(msg, parse_mode="Markdown")
+            
+
+
+    except Exception as e:
+        error_msg = f"Kuna hitilafu kwenye function ya Start: {str(e)}"
+        await context.bot.send_message(chat_id=-1002158955567, text=error_msg)
+
+
+
+async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        message = update.effective_message
+        chat_type = update.effective_chat.type
+
+        if chat_type != "private":
+            return
+
+        users = get_all_chat_ids()
+        if not users:
+            return
+
+        full_name = update.effective_user.full_name if update.effective_user else "Mtu asiyejulikana"
+
+        caption = message.caption or ""
+        ujumbe = message.text or ""
+
+        formatted_caption = f"<pre><code>{full_name}</code></pre>\n\n{caption}" if caption else f"<code>{full_name}</code>"
+        formatted_message = f"<pre><code>{full_name}</code></pre>\n\n{ujumbe}" if ujumbe else None
+
+        media_mapping = {
+            "photo": context.bot.send_photo,
+            "video": context.bot.send_video,
+            "audio": context.bot.send_audio,
+            "document": context.bot.send_document,
+            "voice": context.bot.send_voice,
+        }
+
+        confirmation_message = await message.reply_text("✅ Ujumbe umetumwa!")
+        tasks = []
+
+        for user in users:
+            if not user:
+                continue
+
+            sent = False
+            for media_type, send_func in media_mapping.items():
+                media = getattr(message, media_type, None)
+                if media:
+                    file_id = media[-1].file_id if media_type == "photo" else media.file_id
+                    kwargs = {
+                        "chat_id": user,
+                        media_type: file_id,
+                        "caption": formatted_caption,
+                        "parse_mode": "HTML"
+                    }
+                    tasks.append(send_func(**kwargs))
+                    sent = True
+                    break
+
+            if not sent and message.text:
+                tasks.append(context.bot.send_message(
+                    chat_id=user,
+                    text=formatted_message,
+                    parse_mode="HTML"
+                ))
+
+        await asyncio.gather(*tasks)
+        await confirmation_message.delete()
+
+    except Exception as e:
+        await context.bot.send_message(
+            chat_id=-1001334156926,
+            text=f"Imeshindikana kutuma ujumbe: {e}"
         )
+
+
+
+async def main() -> None:
+    app = Application.builder().token(TOKEN).build()
+
+    async def telegram(request: Request) -> Response:
+        update = Update.de_json(data=await request.json(), bot=app.bot)
+        await app.update_queue.put(update)
         return Response()
 
-    # Starlette app
     starlette_app = Starlette(
-        routes=[
-            Route("/telegram", telegram, methods=["POST"]),
-        ]
+        routes=[Route("/telegram", telegram, methods=["POST"])]
     )
 
-    # Ongeza handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-
-    # Set webhook
-    await app.bot.set_webhook(url=f"{URL}/telegram")
+    
+    app.add_handler(CommandHandler(["start", "off", "on", "takwimu"], amuli))
+    app.add_handler(MessageHandler(filters.ALL, forward))
 
     async with app:
+        await app.bot.set_webhook(url=f"{URL}/telegram")
+
+        server = uvicorn.Server(
+            config=uvicorn.Config(app=starlette_app, port=PORT, host="0.0.0.0")
+        )
+
         await app.start()
-        config = uvicorn.Config(app=starlette_app, host="0.0.0.0", port=PORT, log_level="info")
-        server = uvicorn.Server(config)
         await server.serve()
         await app.stop()
 
