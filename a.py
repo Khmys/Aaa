@@ -1,6 +1,6 @@
 import os
 import asyncio
-import sqlite3
+import psycopg2
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
@@ -16,14 +16,14 @@ URL = "https://superior-vinnie-huduma-2f8eb14f.koyeb.app"
 PORT = int(os.environ.get("PORT", 10000))
 TOKEN = "5861324474:AAH7zCxyQAiroqp74qTgipHlAikpqI0jDMQ"
 
-# SQLite Database Connection
-conn = sqlite3.connect("db.sqlite3", check_same_thread=False)
+# Database Connection
+conn = psycopg2.connect("postgresql://neondb_owner:npg_Uvzk0FtMy1HO@ep-purple-bonus-a4vsqvfv-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require")
 cursor = conn.cursor()
 
-# Database Table Check
+# Database Table Check (optional: create if doesn't exist)
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        chat_id INTEGER PRIMARY KEY,
+        chat_id BIGINT PRIMARY KEY,
         blocked BOOLEAN DEFAULT FALSE
     );
 """)
@@ -32,18 +32,20 @@ conn.commit()
 # Save chat ID
 def save_chat_id(chat_id: int):
     cursor.execute("""
-        INSERT OR IGNORE INTO users (chat_id) VALUES (?);
+        INSERT INTO users (chat_id) 
+        VALUES (%s) 
+        ON CONFLICT (chat_id) DO NOTHING;
     """, (chat_id,))
     conn.commit()
 
-# Remove chat ID (if needed)
+# Remove chat ID
 def remove_chat_id(chat_id: int):
-    cursor.execute("DELETE FROM users WHERE chat_id = ?;", (chat_id,))
+    cursor.execute("DELETE FROM users WHERE chat_id = %s;", (chat_id,))
     conn.commit()
 
 # Get all chat IDs
 def get_all_chat_ids():
-    cursor.execute("SELECT chat_id FROM users WHERE blocked = 0;")
+    cursor.execute("SELECT chat_id FROM users WHERE blocked = FALSE;")
     return [row[0] for row in cursor.fetchall()]
 
 # Handle commands
@@ -63,19 +65,19 @@ async def amuli(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Karibu, {user.first_name}! Tuma post 📤 pia Utapokea 📥 post kutoka kwa watumiaji mbali mbali wa bot hii")
 
         elif command == "/off":
-            cursor.execute("UPDATE users SET blocked = 1 WHERE chat_id = ?;", (chat_id,))
+            cursor.execute("UPDATE users SET blocked = TRUE WHERE chat_id = %s;", (chat_id,))
             conn.commit()
             await update.message.reply_text("⛔ Umejitoa kupokea matangazo. Unaweza kurudi kwa kutumia /start")
 
         elif command == "/on":
-            cursor.execute("UPDATE users SET blocked = 0 WHERE chat_id = ?;", (chat_id,))
+            cursor.execute("UPDATE users SET blocked = FALSE WHERE chat_id = %s;", (chat_id,))
             conn.commit()
             await update.message.reply_text("✅ Umerudi kupokea matangazo. Karibu tena!")
 
         elif command == "takwimu":
             cursor.execute("SELECT COUNT(*) FROM users;")
             jumla = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM users WHERE blocked = 1;")
+            cursor.execute("SELECT COUNT(*) FROM users WHERE blocked = TRUE;")
             walioblock = cursor.fetchone()[0]
             active = jumla - walioblock
 
