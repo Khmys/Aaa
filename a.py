@@ -12,7 +12,8 @@ from starlette.routing import Route
 import uvicorn
 
 # Telegram & Server Info
-URL = "https://exact-tersina-huduma-c36085db.koyeb.app"
+URL = "https://superior-vinnie-huduma-2f8eb14f.koyeb.app"
+
 PORT = int(os.environ.get("PORT", 10000))
 TOKEN = "5861324474:AAH7zCxyQAiroqp74qTgipHlAikpqI0jDMQ"
 
